@@ -11,9 +11,13 @@
  */
 
 import { getParentsNeeded } from './ratios'
+import type { ChildRow } from './types'
 
 /** ISO date string (YYYY-MM-DD) */
 type ISODate = string
+
+/** Day-of-week abbreviations indexed by Date.getDay() (0=Sun, 1=Mon…6=Sat). Index 0 unused. */
+const DOW_ABBRS = ['', 'M', 'T', 'W', 'Th', 'Fr'] as const
 
 export interface DropinAvailabilityInput {
   date: ISODate
@@ -105,12 +109,13 @@ export interface DropinSlot {
   className: string
 }
 
+/** Input for {@link getAvailableDropinSlots}. Per-date slot availability is determined by {@link isDropinAvailable}. */
 export interface DropinSlotsInput {
   year: number
   month: number
   classes: { id: string; name: string; student_teacher_ratio: number }[]
   /** Map of classId → enrolled children (with days_of_week for filtering) */
-  childrenByClass: Record<string, { id: string; days_of_week: string[] | null }[]>
+  childrenByClass: Record<string, Pick<ChildRow, 'id' | 'days_of_week'>[]>
   /** Map of classId → { child_id, date } absences for this month */
   absencesByClass: Record<string, { child_id: string; date: string }[]>
   /** Map of classId → count of approved drop-ins keyed by date */
@@ -143,10 +148,11 @@ export function getAvailableDropinSlots(input: DropinSlotsInput): DropinSlot[] {
       // Filter enrolled children attending on this day of week
       const attendingEnrolled = enrolled.filter(c => {
         if (!c.days_of_week) return dow >= 1 && dow <= 5 // null = all weekdays
-        const DAY_ABBRS = ['', 'M', 'T', 'W', 'Th', 'Fr']
-        return c.days_of_week.includes(DAY_ABBRS[dow] ?? '')
+        return c.days_of_week.includes(DOW_ABBRS[dow] ?? '')
       })
 
+      // holidayDates is passed for completeness — isDropinAvailable checks isSchoolDay internally.
+      // All dates here are already school days, so this check is always true.
       const available = isDropinAvailable({
         date,
         enrolledStudentIds: attendingEnrolled.map(c => c.id),
