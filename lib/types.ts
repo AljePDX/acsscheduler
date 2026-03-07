@@ -181,6 +181,8 @@ export interface SchoolSettingsRow {
   buyout_amount_per_shift: number
   dropin_fee: number
   availability_deadline_day: number
+  missed_shift_fee: number
+  extra_shift_credit: number
 }
 
 export interface NotificationRow {
