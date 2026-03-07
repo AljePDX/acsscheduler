@@ -46,7 +46,7 @@ const WILLINGNESS_RANK: Record<string, number> = {
 
 function sortFamilies(families: EligibleFamily[]) {
   return [...families].sort((a, b) => {
-    // Extra-willing families come first (rank > 1 means willing)
+    // Extra-willing families come first (rank > 0 means willing; '0' scores 0)
     const ra = a.extra_shifts_willing !== '0'
       ? (WILLINGNESS_RANK[a.extra_shifts_willing] ?? 0) + 10
       : 0
@@ -77,9 +77,13 @@ export default function SwapDetailClient({
     if (!selectedId) { setError('Please select a covering family.'); return }
     setError(null)
     startTransition(async () => {
-      await approveSwapAction(swapId, selectedId)
-      router.push('/admin/swaps')
-      router.refresh()
+      const result = await approveSwapAction(swapId, selectedId)
+      if (result?.error) {
+        setError(result.error)
+      } else {
+        router.push('/admin/swaps')
+        router.refresh()
+      }
     })
   }
 

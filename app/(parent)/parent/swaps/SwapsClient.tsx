@@ -34,11 +34,13 @@ function StatusBadge({ status }: { status: string }) {
     open: 'Pending review',
     approved: 'Approved',
     rejected: 'Rejected',
+    cancelled: 'Cancelled',
   }
   const colors: Record<string, { bg: string; color: string }> = {
-    open:     { bg: 'var(--daisy-light)',   color: 'var(--daisy)' },
-    approved: { bg: 'var(--sage-light)',    color: 'var(--sage-dark)' },
-    rejected: { bg: 'var(--warning-light)', color: 'var(--warning)' },
+    open:      { bg: 'var(--daisy-light)',   color: 'var(--daisy)' },
+    approved:  { bg: 'var(--sage-light)',    color: 'var(--sage-dark)' },
+    rejected:  { bg: 'var(--warning-light)', color: 'var(--warning)' },
+    cancelled: { bg: 'var(--border)',         color: 'var(--text-muted)' },
   }
   const style = colors[status] ?? { bg: 'var(--border)', color: 'var(--text-muted)' }
   return (

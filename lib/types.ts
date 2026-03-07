@@ -22,6 +22,7 @@ export type SwapStatus =
   | 'pending_admin'
   | 'approved'
   | 'rejected'
+  | 'cancelled'
 
 export type MakeupDebtStatus =
   | 'outstanding'

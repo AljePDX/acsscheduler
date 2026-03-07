@@ -37,7 +37,10 @@ async function requireAdmin() {
 
 // ── Approve ───────────────────────────────────────────────────────────────────
 
-export async function approveSwapAction(swapId: string, coveringFamilyId: string) {
+export async function approveSwapAction(
+  swapId: string,
+  coveringFamilyId: string
+): Promise<{ error?: string }> {
   const supabase = await requireAdmin()
 
   // Fetch the swap
@@ -54,7 +57,9 @@ export async function approveSwapAction(swapId: string, coveringFamilyId: string
     }[]>()
     .maybeSingle()
 
-  if (!swap || swap.status !== 'open') return
+  if (!swap || swap.status !== 'open') {
+    return { error: 'Swap request is no longer open.' }
+  }
 
   const today = new Date()
   const debtDate = today.toISOString().split('T')[0]
@@ -139,6 +144,7 @@ export async function approveSwapAction(swapId: string, coveringFamilyId: string
 
   revalidatePath('/admin/swaps')
   revalidatePath(`/admin/swaps/${swapId}`)
+  return {}
 }
 
 // ── Reject ────────────────────────────────────────────────────────────────────

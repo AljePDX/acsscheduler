@@ -95,12 +95,10 @@ export default async function AdminDashboardPage() {
   // ── Fetch submitted count for next month ──────────────────────────────────
   let submittedCount = 0
   try {
-    const [totalFamiliesRes, submittedRes] = await Promise.all([
-      supabase.from('families').select('id', { count: 'exact', head: true }),
-      supabase.from('availability').select('family_id', { count: 'exact', head: true })
-        .eq('period_month', nextMonthStart),
-    ])
-    totalFamilies = totalFamiliesRes.count ?? totalFamilies
+    const submittedRes = await supabase
+      .from('availability')
+      .select('family_id', { count: 'exact', head: true })
+      .eq('period_month', nextMonthStart)
     submittedCount = submittedRes.count ?? 0
   } catch {
     // Supabase not configured

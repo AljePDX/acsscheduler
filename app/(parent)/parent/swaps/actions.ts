@@ -118,7 +118,7 @@ export async function cancelSwapAction(swapId: string): Promise<{ error?: string
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   await (ctx.supabase.from('swap_requests') as any)
-    .update({ status: 'rejected' })
+    .update({ status: 'cancelled' })
     .eq('id', swapId)
 
   revalidatePath('/parent/swaps')

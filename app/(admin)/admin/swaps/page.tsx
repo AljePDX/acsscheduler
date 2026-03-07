@@ -22,6 +22,7 @@ const STATUS_LABELS: Record<string, { label: string; color: string }> = {
   pending_admin:              { label: 'Pending admin',      color: 'var(--warning)' },
   approved:                   { label: 'Approved',           color: 'var(--sage-dark)' },
   rejected:                   { label: 'Rejected',           color: 'var(--danger)' },
+  cancelled:                  { label: 'Cancelled',          color: 'var(--text-muted)' },
 }
 
 const CLASS_COLORS: Record<string, string> = {
@@ -80,7 +81,7 @@ export default async function AdminSwapsPage() {
   // ── Group by status ──────────────────────────────────────────────────────────
   const pending  = swaps.filter(s => s.status === 'open')
   const active   = swaps.filter(s => s.status === 'pending_covering_approval')
-  const resolved = swaps.filter(s => s.status === 'approved' || s.status === 'rejected').slice(0, 20)
+  const resolved = swaps.filter(s => s.status === 'approved' || s.status === 'rejected' || s.status === 'cancelled').slice(0, 20)
 
   const cardStyle = {
     background: 'var(--warm-white)',
