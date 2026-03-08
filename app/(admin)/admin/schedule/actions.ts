@@ -286,3 +286,110 @@ export async function reassignShiftAction(
   revalidatePath('/admin/schedule')
   return {}
 }
+
+// ── Add Shift ─────────────────────────────────────────────────────────────────
+
+export async function addShiftAction(
+  date: string,
+  classId: string,
+  familyId: string
+): Promise<{ error?: string }> {
+  const supabase = await createClient()
+  await verifyAdmin(supabase)
+
+  // Compute conflict_warning: check other families already on this date
+  const { data: sameDayShifts } = await supabase
+    .from('shifts')
+    .select('family_id')
+    .eq('date', date)
+    .not('family_id', 'is', null)
+    .returns<{ family_id: string }[]>()
+
+  const otherFamilyIds = (sameDayShifts ?? []).map(s => s.family_id as string)
+
+  const { data: conflictRows } = await supabase
+    .from('family_conflicts')
+    .select('family_a_id, family_b_id')
+    .returns<FamilyConflictRow[]>()
+
+  const conflictWarning = computeConflictWarning(familyId, otherFamilyIds, conflictRows ?? [])
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { error } = await (supabase.from('shifts') as any).insert({
+    date,
+    class_id: classId,
+    family_id: familyId,
+    status: 'proposed',
+    conflict_warning: conflictWarning,
+  })
+
+  if (error) return { error: error.message }
+  revalidatePath('/admin/schedule')
+  return {}
+}
+
+// ── Remove Assignment ─────────────────────────────────────────────────────────
+
+export async function removeAssignmentAction(
+  shiftId: string
+): Promise<{ error?: string }> {
+  const supabase = await createClient()
+  await verifyAdmin(supabase)
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { error } = await (supabase.from('shifts') as any)
+    .update({ family_id: null, conflict_warning: false })
+    .eq('id', shiftId)
+
+  if (error) return { error: error.message }
+  revalidatePath('/admin/schedule')
+  return {}
+}
+
+// ── Move Shift Class ──────────────────────────────────────────────────────────
+
+export async function moveShiftClassAction(
+  shiftId: string,
+  newClassId: string
+): Promise<{ error?: string }> {
+  const supabase = await createClient()
+  await verifyAdmin(supabase)
+
+  const { data: shift } = await supabase
+    .from('shifts')
+    .select('date, family_id')
+    .eq('id', shiftId)
+    .returns<{ date: string; family_id: string | null }[]>()
+    .maybeSingle()
+
+  if (!shift) return { error: 'Shift not found.' }
+
+  let conflictWarning = false
+  if (shift.family_id) {
+    const { data: sameDayShifts } = await supabase
+      .from('shifts')
+      .select('family_id')
+      .eq('date', shift.date)
+      .neq('id', shiftId)
+      .not('family_id', 'is', null)
+      .returns<{ family_id: string }[]>()
+
+    const otherFamilyIds = (sameDayShifts ?? []).map(s => s.family_id as string)
+
+    const { data: conflictRows } = await supabase
+      .from('family_conflicts')
+      .select('family_a_id, family_b_id')
+      .returns<FamilyConflictRow[]>()
+
+    conflictWarning = computeConflictWarning(shift.family_id, otherFamilyIds, conflictRows ?? [])
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { error } = await (supabase.from('shifts') as any)
+    .update({ class_id: newClassId, conflict_warning: conflictWarning })
+    .eq('id', shiftId)
+
+  if (error) return { error: error.message }
+  revalidatePath('/admin/schedule')
+  return {}
+}
