@@ -14,7 +14,7 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { approveDropinAction, rejectDropinAction } from './actions'
-import { getAvailableDropinSlots, getSchoolDaysInMonth } from '@/lib/dropins'
+import { getAvailableDropinSlots, getSchoolDaysInMonth, type DropinSlot } from '@/lib/dropins'
 import type { DropinRequestRow, FamilyRow, ChildRow, ClassRow } from '@/lib/types'
 
 export const metadata = { title: 'Admin · Drop-ins' }
@@ -63,7 +63,7 @@ export default async function AdminDropInsPage() {
   const capEnd = `${capYear}-${String(capMonth).padStart(2, '0')}-${String(lastDayOfCapMonth).padStart(2, '0')}`
 
   let schoolDays: string[] = []
-  let capacitySlots: { date: string; classId: string; className: string }[] = []
+  let capacitySlots: DropinSlot[] = []
 
   try {
     const [dropinsRes, familiesRes, childrenRes, classesRes] = await Promise.all([
@@ -79,7 +79,7 @@ export default async function AdminDropInsPage() {
 
     // ── Capacity grid computation ────────────────────────────────────────────
     const [capAvailRes, capDropinRes, capHolidayRes] = await Promise.all([
-      supabase.from('availability').select('planned_absences').gte('period_month', capStart).lte('period_month', capStart),
+      supabase.from('availability').select('planned_absences').eq('period_month', capStart),
       supabase.from('dropin_requests').select('class_id, date').eq('status', 'approved').gte('date', capStart).lte('date', capEnd),
       supabase.from('holidays').select('date').gte('date', capStart).lte('date', capEnd),
     ])
@@ -98,7 +98,7 @@ export default async function AdminDropInsPage() {
     // Build absencesByClass
     const absencesByClass: Record<string, { child_id: string; date: string }[]> = {}
     for (const avRow of (capAvailRes.data ?? []) as { planned_absences: { child_id: string; date: string }[] }[]) {
-      for (const abs of avRow.planned_absences ?? []) {
+      for (const abs of (avRow.planned_absences ?? []) /* null in older rows */) {
         const child = children.find(c => c.id === abs.child_id)
         if (!child) continue
         const list = absencesByClass[child.class_id] ?? []
