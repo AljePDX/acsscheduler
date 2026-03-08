@@ -45,8 +45,10 @@ function makeAvailability(
     family_id: familyId,
     period_month: '2026-03-01',
     available_dates: dates,
+    preferred_dates: [],
     planned_absences: absences,
     extra_shifts_willing: '0',
+    notes: null,
     submitted_at: '2026-02-20T00:00:00Z',
   }
 }
@@ -344,6 +346,69 @@ describe('proposeSchedule', () => {
       for (const [, count] of Array.from(dateCounts)) {
         expect(count).toBe(1)
       }
+    })
+  })
+
+  describe('candidate sort order', () => {
+    // Shared helpers
+    const makeClass = (id: string, ratio: number) => ({
+      id, name: id, student_teacher_ratio: ratio, created_at: '',
+    })
+    const makeFamily = (id: string, override: number) => ({
+      id, name: id, email: '', phone: null, notes: null,
+      shift_override: override, created_at: '',
+    })
+    const makeChild = (classId: string, familyId: string, idx: number) => ({
+      id: `c${idx}`, family_id: familyId, class_id: classId, name: `c${idx}`,
+      days_per_week: 5, days_of_week: null,
+      days_change_pending: null, days_change_status: null,
+    })
+    const makeAvail = (familyId: string, dates: string[], preferred: string[] = []) => ({
+      id: familyId + '-av', family_id: familyId, period_month: '2026-04-01',
+      available_dates: dates, preferred_dates: preferred,
+      planned_absences: [], extra_shifts_willing: '0' as const, notes: null, submitted_at: '',
+    })
+
+    it('schedules the most constrained family first (fewest slack days)', () => {
+      // fam-a: available 1 day, needs 1 shift → slack = 0 (most constrained)
+      // fam-b: available 5 days, needs 1 shift → slack = 4 (flexible)
+      // 1 slot on Apr 1 (Wed) → fam-a MUST win
+      const result = proposeSchedule({
+        year: 2026, month: 4,
+        classes: [makeClass('cls', 5)],
+        // 6 students → ceil(6/5)-1 = 1 parent needed
+        children: Array.from({ length: 6 }, (_, i) => makeChild('cls', `other-${i}`, i)),
+        families: [makeFamily('fam-a', 1), makeFamily('fam-b', 1)],
+        availability: [
+          makeAvail('fam-a', ['2026-04-01']),
+          makeAvail('fam-b', ['2026-04-01', '2026-04-02', '2026-04-03', '2026-04-07', '2026-04-08']),
+        ],
+        conflicts: [],
+        holidayDates: new Set(),
+      })
+      const apr1 = result.shifts.filter(s => s.date === '2026-04-01')
+      expect(apr1.some(s => s.family_id === 'fam-a')).toBe(true)
+    })
+
+    it('assigns a family to their preferred date over an equally-constrained peer', () => {
+      // Both families: available only on Apr 2, need 1 shift → same slack (0)
+      // fam-a marks Apr 2 as preferred; fam-b does not
+      // 1 slot on Apr 2 → fam-a should win (preferred tiebreaker)
+      const result = proposeSchedule({
+        year: 2026, month: 4,
+        classes: [makeClass('cls', 5)],
+        children: Array.from({ length: 6 }, (_, i) => makeChild('cls', `other-${i}`, i)),
+        families: [makeFamily('fam-a', 1), makeFamily('fam-b', 1)],
+        availability: [
+          makeAvail('fam-a', ['2026-04-02'], ['2026-04-02']),
+          makeAvail('fam-b', ['2026-04-02'], []),
+        ],
+        conflicts: [],
+        holidayDates: new Set(),
+      })
+      const apr2 = result.shifts.filter(s => s.date === '2026-04-02')
+      expect(apr2.length).toBe(1)
+      expect(apr2[0].family_id).toBe('fam-a')
     })
   })
 
