@@ -90,8 +90,10 @@ export interface AvailabilityRow {
   family_id: string
   period_month: string // ISO date string: first day of month
   available_dates: string[] // ISO date strings
+  preferred_dates: string[] // always a subset of available_dates
   planned_absences: PlannedAbsence[]
   extra_shifts_willing: '0' | '1-2' | '3-4' | '5+'
+  notes: string | null
   submitted_at: string
 }
 
@@ -114,7 +116,7 @@ export interface ShiftRow {
   id: string
   date: string // ISO date string
   class_id: string
-  family_id: string
+  family_id: string | null
   status: ShiftStatus
   conflict_warning: boolean
   created_at: string
