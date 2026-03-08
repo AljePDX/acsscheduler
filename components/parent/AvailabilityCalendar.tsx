@@ -29,7 +29,6 @@ interface Props {
   year: number
   month: number // 1-based
   familyId: string | null
-  /** Renamed from 'familyChildren' to avoid conflict with React's built-in familyChildren prop */
   familyChildren: ChildRow[]
   /** Array of YYYY-MM-DD strings — passed from server (not Set, which isn't serializable) */
   holidayDates: string[]
@@ -204,7 +203,10 @@ export function AvailabilityCalendar({
         extraShiftsWilling
       )
       if (result.error) setSaveError(result.error)
-      else setSaveSuccess(true)
+      else {
+        setSaveSuccess(true)
+        setIsEditing(false)
+      }
     })
   }
 
