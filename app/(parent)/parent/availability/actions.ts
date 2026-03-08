@@ -10,6 +10,8 @@
 
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
+import { computeAvailabilityDiff, diffSummary } from '@/lib/availability-utils'
+import { notifyAdmins } from '@/lib/notifications'
 
 export interface PlannedAbsenceInput {
   child_id: string
@@ -52,6 +54,17 @@ export async function submitAvailabilityAction(
     return { error: 'Invalid extra shifts willingness value.' }
   }
 
+  // Check for existing submission to detect edits
+  const { data: existing } = await supabase
+    .from('availability')
+    .select('available_dates, planned_absences')
+    .eq('family_id', familyId)
+    .eq('period_month', periodMonth)
+    .returns<{ available_dates: string[]; planned_absences: { child_id: string; date: string }[] }[]>()
+    .maybeSingle()
+
+  const isEdit = !!existing
+
   // Upsert — onConflict uses the unique index on (family_id, period_month).
   // The Supabase TS generic collapses to `never` for the availability table
   // because the planned_absences JSONB column's inferred type is incompatible.
@@ -70,6 +83,36 @@ export async function submitAvailabilityAction(
 
   if (error) {
     return { error: 'Failed to save availability. Please try again.' }
+  }
+
+  if (isEdit && existing) {
+    const diff = computeAvailabilityDiff(
+      {
+        availableDates: existing.available_dates ?? [],
+        absences: existing.planned_absences ?? [],
+      },
+      {
+        availableDates: availableDates,
+        absences: plannedAbsences,
+      }
+    )
+    if (!diff.isEmpty) {
+      const { data: famRow } = await supabase
+        .from('families')
+        .select('name')
+        .eq('id', familyId)
+        .returns<{ name: string }[]>()
+        .maybeSingle()
+      const famName = famRow?.name ?? 'A family'
+      const monthLabel = new Date(periodMonth).toLocaleString('en-US', { month: 'long', year: 'numeric' })
+
+      await notifyAdmins(supabase, {
+        title: `${famName} updated ${monthLabel} availability`,
+        message: diffSummary(diff),
+        type: 'availability',
+        link: '/admin/schedule',
+      }).catch(() => {}) // non-fatal
+    }
   }
 
   return { success: true }
