@@ -23,7 +23,9 @@ export async function submitAvailabilityAction(
   periodMonth: string, // YYYY-MM-01
   availableDates: string[],
   plannedAbsences: PlannedAbsenceInput[],
-  extraShiftsWilling: string = '0'
+  extraShiftsWilling: string = '0',
+  preferredDates: string[] = [],
+  notes: string = ''
 ): Promise<{ error?: string; success?: boolean }> {
   const supabase = await createClient()
 
@@ -77,6 +79,8 @@ export async function submitAvailabilityAction(
       available_dates: availableDates,
       planned_absences: plannedAbsences,
       extra_shifts_willing: extraShiftsWilling,
+      preferred_dates: preferredDates,
+      notes: notes || null,
     },
     { onConflict: 'family_id,period_month' }
   )
