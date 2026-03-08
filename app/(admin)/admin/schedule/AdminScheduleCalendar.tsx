@@ -25,7 +25,7 @@ export interface EnrichedShift {
   date: string
   classId: string
   className: string
-  familyId: string
+  familyId: string | null
   familyName: string
   status: string
   conflictWarning: boolean

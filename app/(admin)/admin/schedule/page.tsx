@@ -16,6 +16,13 @@ import type { EnrichedShift } from './AdminScheduleCalendar'
 
 export const metadata = { title: 'Admin · Schedule' }
 
+// Per-family availability info used in the Day Panel
+type FamilyAvailInfo = {
+  availableDates: string[]
+  preferredDates: string[]
+  notes: string | null
+}
+
 interface SearchParams {
   year?: string
   month?: string
@@ -54,6 +61,7 @@ export default async function AdminSchedulePage({
   let hasProposed = false
   let familyStats: { id: string; name: string; required: number; assigned: number }[] = []
   let conflictPairs: FamilyConflictRow[] = []
+  let familyAvailability: Record<string, FamilyAvailInfo> = {}
 
   try {
     const mm = String(targetMonth).padStart(2, '0')
@@ -61,7 +69,7 @@ export default async function AdminSchedulePage({
     const periodStart = `${targetYear}-${mm}-01`
     const periodEnd = `${targetYear}-${mm}-${String(lastDay).padStart(2, '0')}`
 
-    const [shiftsRes, classesRes, familiesRes, childrenRes, holidaysRes, conflictPairsRes] =
+    const [shiftsRes, classesRes, familiesRes, childrenRes, holidaysRes, conflictPairsRes, availRes] =
       await Promise.all([
         supabase
           .from('shifts')
@@ -83,6 +91,11 @@ export default async function AdminSchedulePage({
           .lte('date', periodEnd),
 
         supabase.from('family_conflicts').select('family_a_id, family_b_id'),
+
+        supabase
+          .from('availability')
+          .select('family_id, available_dates, preferred_dates, notes')
+          .eq('period_month', periodStart),
       ])
 
     const rawShifts = (shiftsRes.data as ShiftRow[]) ?? []
@@ -104,8 +117,8 @@ export default async function AdminSchedulePage({
         date: s.date,
         classId: s.class_id,
         className: cls?.name ?? 'Unknown',
-        familyId: s.family_id,
-        familyName: familyMap.get(s.family_id) ?? 'Unknown',
+        familyId: s.family_id ?? null,                                               // nullable
+        familyName: s.family_id ? (familyMap.get(s.family_id) ?? 'Unknown') : '—',  // fallback
         status: s.status,
         conflictWarning: s.conflict_warning,
       }
@@ -132,6 +145,15 @@ export default async function AdminSchedulePage({
       ).length
       return { id: fam.id, name: fam.name, required, assigned }
     })
+
+    // Build per-family availability info for the Day Panel
+    for (const row of ((availRes.data ?? []) as { family_id: string; available_dates: string[]; preferred_dates: string[]; notes: string | null }[])) {
+      familyAvailability[row.family_id] = {
+        availableDates: row.available_dates ?? [],
+        preferredDates: row.preferred_dates ?? [],
+        notes: row.notes ?? null,
+      }
+    }
   } catch {
     // Supabase not configured — render with empty state
   }
@@ -147,6 +169,7 @@ export default async function AdminSchedulePage({
       hasProposed={hasProposed}
       familyStats={familyStats}
       conflictPairs={conflictPairs}
+      familyAvailability={familyAvailability}
     />
   )
 }
