@@ -64,6 +64,8 @@ export default async function AvailabilityPage({
   let initialAvailableDates: string[] = []
   let initialAbsences: PlannedAbsence[] = []
   let initialExtraShiftsWilling = '0'
+  let initialPreferredDates: string[] = []
+  let initialNotes = ''
   let requiredShifts: number | null = null
   let deadlineDay: number | null = null
 
@@ -93,10 +95,10 @@ export default async function AvailabilityPage({
 
         supabase
           .from('availability')
-          .select('available_dates, planned_absences, extra_shifts_willing')
+          .select('available_dates, planned_absences, preferred_dates, notes, extra_shifts_willing')
           .eq('family_id', familyId)
           .eq('period_month', periodMonth)
-          .returns<{ available_dates: string[]; planned_absences: PlannedAbsence[]; extra_shifts_willing: string }[]>()
+          .returns<{ available_dates: string[]; planned_absences: PlannedAbsence[]; preferred_dates: string[]; notes: string | null; extra_shifts_willing: string }[]>()
           .maybeSingle(),
 
         supabase
@@ -112,6 +114,8 @@ export default async function AvailabilityPage({
       initialAvailableDates = availRes.data?.available_dates ?? []
       initialAbsences = (availRes.data?.planned_absences as PlannedAbsence[]) ?? []
       initialExtraShiftsWilling = availRes.data?.extra_shifts_willing ?? '0'
+      initialPreferredDates = (availRes.data?.preferred_dates ?? []) as string[]
+      initialNotes = (availRes.data?.notes ?? '') as string
       requiredShifts = getRequiredShifts({ shift_override: null }, children)
       deadlineDay = settingsRes.data?.availability_deadline_day ?? null
     }
@@ -171,6 +175,8 @@ export default async function AvailabilityPage({
         initialAvailableDates={initialAvailableDates}
         initialAbsences={initialAbsences}
         initialExtraShiftsWilling={initialExtraShiftsWilling}
+        initialPreferredDates={initialPreferredDates}
+        initialNotes={initialNotes}
         requiredShifts={requiredShifts}
         hasExistingSubmission={hasExistingSubmission}
       />

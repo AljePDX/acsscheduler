@@ -35,6 +35,8 @@ interface Props {
   initialAvailableDates: string[]
   initialAbsences: PlannedAbsence[]
   initialExtraShiftsWilling?: string
+  initialPreferredDates?: string[]
+  initialNotes?: string
   requiredShifts: number | null
   hasExistingSubmission?: boolean
 }
@@ -64,6 +66,8 @@ export function AvailabilityCalendar({
   initialAvailableDates,
   initialAbsences,
   initialExtraShiftsWilling,
+  initialPreferredDates = [],
+  initialNotes = '',
   requiredShifts,
   hasExistingSubmission = false,
 }: Props) {
@@ -77,6 +81,12 @@ export function AvailabilityCalendar({
   const [availableDates, setAvailableDates] = useState<Set<string>>(
     () => new Set(initialAvailableDates)
   )
+
+  const [preferredDates, setPreferredDates] = useState<Set<string>>(() => {
+    const available = new Set(initialAvailableDates)
+    return new Set(initialPreferredDates.filter(d => available.has(d)))
+  })
+  const [notes, setNotes] = useState<string>(initialNotes)
 
   // Map<childId, Set<YYYY-MM-DD>>
   const [absences, setAbsences] = useState<Map<string, Set<string>>>(() => {
@@ -154,12 +164,17 @@ export function AvailabilityCalendar({
       const d = toISO(day)
 
       if (mode === 'available') {
-        setAvailableDates(prev => {
-          const next = new Set(prev)
-          if (next.has(d)) next.delete(d)
-          else next.add(d)
-          return next
-        })
+        if (preferredDates.has(d)) {
+          // Preferred → Unmarked: remove from both
+          setPreferredDates(prev => { const n = new Set(prev); n.delete(d); return n })
+          setAvailableDates(prev => { const n = new Set(prev); n.delete(d); return n })
+        } else if (availableDates.has(d)) {
+          // Available → Preferred: promote
+          setPreferredDates(prev => { const n = new Set(prev); n.add(d); return n })
+        } else {
+          // Unmarked → Available
+          setAvailableDates(prev => { const n = new Set(prev); n.add(d); return n })
+        }
       } else {
         if (!selectedChildId) return
         setAbsences(prev => {
@@ -173,7 +188,7 @@ export function AvailabilityCalendar({
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [mode, selectedChildId, year, month, holidaySet]
+    [mode, selectedChildId, year, month, holidaySet, preferredDates, availableDates]
   )
 
   // ── Save ─────────────────────────────────────────────────────────────────────────────────────
@@ -200,7 +215,9 @@ export function AvailabilityCalendar({
         periodMonth,
         Array.from(availableDates).sort(),
         absenceList,
-        extraShiftsWilling
+        extraShiftsWilling,
+        [...preferredDates],
+        notes
       )
       if (result.error) setSaveError(result.error)
       else {
@@ -299,7 +316,14 @@ export function AvailabilityCalendar({
                 Availability submitted ✓
               </div>
               <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>
-                {availableDates.size} volunteer day{availableDates.size !== 1 ? 's' : ''}
+                <span>
+                  {availableDates.size} volunteer day{availableDates.size !== 1 ? 's' : ''}
+                  {preferredDates.size > 0 && (
+                    <span style={{ color: 'var(--daisy)', marginLeft: '0.4rem' }}>
+                      (★ {preferredDates.size} preferred)
+                    </span>
+                  )}
+                </span>
                 {totalAbsences > 0 && ` · ${totalAbsences} absence${totalAbsences !== 1 ? 's' : ''}`}
               </div>
             </div>
@@ -506,7 +530,7 @@ export function AvailabilityCalendar({
                 onClick={() => toggleDate(day)}
                 disabled={disabled}
                 title={holidaySet.has(toISO(day)) ? 'Holiday — no school' : attends ? 'Your child attends on this day' : undefined}
-                aria-label={`${toISO(day)}${availableDates.has(toISO(day)) ? ', available' : ''}${Array.from(absences.values()).some(s => s.has(toISO(day))) ? ', absent' : ''}${attends ? ', child attends' : ''}`}
+                aria-label={`${toISO(day)}${availableDates.has(toISO(day)) ? ', available' : ''}${preferredDates.has(toISO(day)) ? ', preferred' : ''}${Array.from(absences.values()).some(s => s.has(toISO(day))) ? ', absent' : ''}${attends ? ', child attends' : ''}`}
                 style={{
                   position: 'relative',
                   aspectRatio: '1',
@@ -538,6 +562,23 @@ export function AvailabilityCalendar({
                     }}
                     aria-hidden
                   />
+                )}
+                {/* Star badge: shown when date is preferred */}
+                {preferredDates.has(toISO(day)) && (
+                  <span
+                    style={{
+                      position: 'absolute',
+                      top: '2px',
+                      right: '4px',
+                      fontSize: '0.65rem',
+                      color: 'var(--daisy)',
+                      lineHeight: 1,
+                      pointerEvents: 'none',
+                    }}
+                    aria-hidden={true}
+                  >
+                    ★
+                  </span>
                 )}
               </button>
             )
@@ -642,6 +683,15 @@ export function AvailabilityCalendar({
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
           <SummaryRow label="Volunteer days selected" value={String(volunteerDays)} valueColor="var(--sage-dark)" />
 
+          {preferredDates.size > 0 && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.875rem' }}>
+              <span style={{ color: 'var(--text-muted)' }}>Preferred days</span>
+              <span style={{ fontWeight: 600, color: 'var(--daisy)' }}>
+                ★ {preferredDates.size} preferred
+              </span>
+            </div>
+          )}
+
           {familyChildren.map(child => (
             <SummaryRow
               key={child.id}
@@ -675,6 +725,43 @@ export function AvailabilityCalendar({
             </p>
           </div>
         </div>
+      </div>
+
+      {/* Notes for scheduler */}
+      <div style={{ marginTop: '1.25rem' }}>
+        <label
+          htmlFor="availability-notes"
+          style={{
+            display: 'block',
+            fontSize: '0.68rem',
+            fontWeight: 700,
+            textTransform: 'uppercase',
+            letterSpacing: '0.08em',
+            color: 'var(--text-muted)',
+            marginBottom: '0.4rem',
+          }}
+        >
+          Notes for the scheduler (optional)
+        </label>
+        <textarea
+          id="availability-notes"
+          value={notes}
+          onChange={e => setNotes(e.target.value)}
+          placeholder="e.g. I'm free any day but prefer mornings."
+          rows={3}
+          style={{
+            width: '100%',
+            padding: '0.6rem 0.75rem',
+            background: 'var(--warm-white)',
+            border: '1px solid var(--border)',
+            borderRadius: '8px',
+            fontSize: '0.875rem',
+            color: 'var(--text)',
+            resize: 'vertical',
+            fontFamily: 'inherit',
+            lineHeight: 1.5,
+          }}
+        />
       </div>
 
       {/* Feedback */}
