@@ -9,14 +9,21 @@
  * - Conflict warning: amber banner that must be acknowledged before publishing.
  * - Month view (calendar grid, default) and Week view (stacked day cards).
  * - Month/week navigation.
- * - Clickable shift chips open a reassign panel with alphabetical family list.
+ * - Clicking a day cell opens DayManagementPanel (add/remove/move shifts).
  */
 
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import { proposeScheduleAction, publishScheduleAction, reassignShiftAction } from './actions'
+import {
+  proposeScheduleAction,
+  publishScheduleAction,
+  addShiftAction,
+  removeAssignmentAction,
+  moveShiftClassAction,
+} from './actions'
 import type { ProposalSummary } from './actions'
 import type { ClassRow, FamilyConflictRow } from '@/lib/types'
+import { computeConflictWarning } from '@/lib/schedule-utils'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -48,6 +55,11 @@ interface Props {
   hasProposed: boolean
   familyStats: FamilyShiftStats[]
   conflictPairs: FamilyConflictRow[]
+  familyAvailability: Record<string, {
+    availableDates: string[]
+    preferredDates: string[]
+    notes: string | null
+  }>
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -104,6 +116,295 @@ function formatWeekDay(isoDate: string): string {
   })
 }
 
+// ── DayManagementPanel ────────────────────────────────────────────────────────
+
+interface DayManagementPanelProps {
+  date: string
+  classes: ClassRow[]
+  dayShifts: EnrichedShift[]
+  familyStats: FamilyShiftStats[]
+  familyAvailability: Record<string, {
+    availableDates: string[]
+    preferredDates: string[]
+    notes: string | null
+  }>
+  conflictPairs: FamilyConflictRow[]
+  onClose: () => void
+}
+
+function DayManagementPanel({
+  date,
+  classes,
+  dayShifts,
+  familyStats,
+  familyAvailability,
+  conflictPairs,
+  onClose,
+}: DayManagementPanelProps) {
+  const [isPending, startTransition] = useTransition()
+  const [error, setError] = useState<string | null>(null)
+
+  // Families assigned on this day (non-null family_id)
+  const assignedFamilyIds = dayShifts
+    .filter(s => s.familyId !== null)
+    .map(s => s.familyId as string)
+
+  // Eligible families for "+ Add": available this date, not already assigned, quota remaining
+  const eligibleFamilies = familyStats.filter(fam => {
+    const avail = familyAvailability[fam.id]
+    if (!avail?.availableDates.includes(date)) return false
+    if (assignedFamilyIds.includes(fam.id)) return false
+    if (fam.assigned >= fam.required) return false
+    return true
+  })
+
+  const hasConflictOnDay = (familyId: string) =>
+    computeConflictWarning(familyId, assignedFamilyIds, conflictPairs)
+
+  const formattedDate = new Date(date + 'T00:00:00').toLocaleDateString('en-US', {
+    weekday: 'long', month: 'long', day: 'numeric',
+  })
+
+  const CLASS_COLORS: Record<string, string> = {
+    Rose: 'var(--rose)', Daisy: 'var(--daisy)', Azalea: 'var(--azalea)',
+  }
+  const CLASS_BG: Record<string, string> = {
+    Rose: 'var(--rose-light)', Daisy: 'var(--daisy-light)', Azalea: 'var(--azalea-light)',
+  }
+
+  function handleRemove(shiftId: string) {
+    setError(null)
+    startTransition(async () => {
+      const res = await removeAssignmentAction(shiftId)
+      if (res.error) setError(res.error)
+    })
+  }
+
+  function handleMove(shiftId: string, newClassId: string) {
+    setError(null)
+    startTransition(async () => {
+      const res = await moveShiftClassAction(shiftId, newClassId)
+      if (res.error) setError(res.error)
+    })
+  }
+
+  function handleAdd(classId: string, familyId: string) {
+    setError(null)
+    startTransition(async () => {
+      const res = await addShiftAction(date, classId, familyId)
+      if (res.error) setError(res.error)
+    })
+  }
+
+  return (
+    <>
+      {/* Backdrop */}
+      <div
+        onClick={onClose}
+        style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.3)', zIndex: 40,
+        }}
+      />
+      {/* Panel */}
+      <div
+        style={{
+          position: 'fixed', top: 0, right: 0, bottom: 0, width: '360px',
+          background: 'var(--warm-white)', borderLeft: '1px solid var(--border)',
+          zIndex: 50, overflowY: 'auto', display: 'flex', flexDirection: 'column',
+          boxShadow: 'var(--shadow)',
+        }}
+      >
+        {/* Header */}
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '1.25rem 1.25rem 0.75rem',
+          borderBottom: '1px solid var(--border)',
+        }}>
+          <div>
+            <div style={{ fontSize: '0.68rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-muted)' }}>
+              Manage Day
+            </div>
+            <div style={{ fontSize: '1rem', fontWeight: 600, color: 'var(--text)', marginTop: '0.1rem' }}>
+              {formattedDate}
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            style={{ background: 'transparent', border: 'none', fontSize: '1.25rem', cursor: 'pointer', color: 'var(--text-muted)', padding: '0.25rem' }}
+            aria-label="Close"
+          >
+            ×
+          </button>
+        </div>
+
+        {/* Class sections */}
+        <div style={{ flex: 1, padding: '1rem 1.25rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+          {classes.map(cls => {
+            const classShifts = dayShifts.filter(s => s.classId === cls.id)
+            const classEligible = eligibleFamilies.filter(f =>
+              !classShifts.some(s => s.familyId === f.id)
+            )
+            const otherClassIds = classes
+              .filter(c => c.id !== cls.id)
+              .map(c => ({ id: c.id, name: c.name }))
+
+            return (
+              <div key={cls.id}>
+                {/* Class header */}
+                <div style={{
+                  fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase',
+                  letterSpacing: '0.08em', color: CLASS_COLORS[cls.name] ?? 'var(--text-muted)',
+                  marginBottom: '0.5rem', borderLeft: `3px solid ${CLASS_COLORS[cls.name] ?? 'var(--border)'}`,
+                  paddingLeft: '0.5rem',
+                }}>
+                  {cls.name}
+                </div>
+
+                {/* Assigned families */}
+                {classShifts.length === 0 && (
+                  <div style={{
+                    padding: '0.6rem 0.75rem',
+                    background: 'var(--warning-light)', borderRadius: '8px',
+                    border: '1px solid var(--warning)',
+                    fontSize: '0.8rem', color: 'var(--warning)', fontWeight: 600,
+                  }}>
+                    ⚠ Unfilled — needs a volunteer
+                  </div>
+                )}
+                {classShifts.map(shift => {
+                  if (shift.familyId === null) {
+                    return (
+                      <div key={shift.id} style={{
+                        padding: '0.6rem 0.75rem', marginBottom: '0.4rem',
+                        background: 'var(--warning-light)', borderRadius: '8px',
+                        border: '1px solid var(--warning)',
+                        fontSize: '0.8rem', color: 'var(--warning)', fontWeight: 600,
+                      }}>
+                        ⚠ Unfilled slot
+                      </div>
+                    )
+                  }
+                  const avail = familyAvailability[shift.familyId]
+                  const isPreferred = avail?.preferredDates.includes(date) ?? false
+                  const hasNote = !!avail?.notes
+
+                  return (
+                    <div key={shift.id} style={{
+                      padding: '0.65rem 0.75rem', marginBottom: '0.4rem',
+                      background: 'var(--cream)', borderRadius: '8px',
+                      border: '1px solid var(--border)',
+                    }}>
+                      {/* Family name row */}
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
+                        <span style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text)' }}>
+                          {isPreferred && <span title="Preferred day" style={{ color: 'var(--daisy)', marginRight: '0.3rem' }}>★</span>}
+                          {shift.familyName}
+                          {shift.conflictWarning && (
+                            <span title="Conflict warning" style={{ color: 'var(--warning)', marginLeft: '0.3rem', fontSize: '0.75rem' }}>⚠</span>
+                          )}
+                        </span>
+                        {/* Actions */}
+                        <div style={{ display: 'flex', gap: '0.35rem', flexShrink: 0 }}>
+                          {/* Move to another class */}
+                          {otherClassIds.map(oc => (
+                            <button
+                              key={oc.id}
+                              onClick={() => handleMove(shift.id, oc.id)}
+                              disabled={isPending}
+                              title={`Move to ${oc.name}`}
+                              style={{
+                                fontSize: '0.7rem', padding: '0.2rem 0.4rem',
+                                background: CLASS_BG[oc.name] ?? 'var(--cream)',
+                                color: CLASS_COLORS[oc.name] ?? 'var(--text)',
+                                border: `1px solid ${CLASS_COLORS[oc.name] ?? 'var(--border)'}`,
+                                borderRadius: '4px', cursor: 'pointer', fontWeight: 600,
+                              }}
+                            >
+                              → {oc.name}
+                            </button>
+                          ))}
+                          {/* Remove */}
+                          <button
+                            onClick={() => handleRemove(shift.id)}
+                            disabled={isPending}
+                            title="Remove assignment"
+                            style={{
+                              fontSize: '0.75rem', padding: '0.2rem 0.45rem',
+                              background: 'transparent',
+                              border: '1px solid var(--border)',
+                              borderRadius: '4px', cursor: 'pointer',
+                              color: 'var(--danger)',
+                            }}
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Note (if any) */}
+                      {hasNote && (
+                        <div style={{
+                          fontSize: '0.75rem', color: 'var(--text-muted)', fontStyle: 'italic',
+                          marginTop: '0.3rem',
+                          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                        }}>
+                          {avail!.notes}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+
+                {/* Add Family */}
+                {classEligible.length > 0 && (
+                  <div style={{ marginTop: '0.35rem' }}>
+                    <select
+                      value=""
+                      onChange={e => {
+                        if (e.target.value) handleAdd(cls.id, e.target.value)
+                      }}
+                      disabled={isPending}
+                      style={{
+                        width: '100%', padding: '0.45rem 0.6rem',
+                        background: 'var(--warm-white)', border: '1px dashed var(--border)',
+                        borderRadius: '8px', fontSize: '0.8rem', color: 'var(--text-muted)',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      <option value="">+ Add family…</option>
+                      {classEligible.map(fam => {
+                        const conflict = hasConflictOnDay(fam.id)
+                        const preferred = familyAvailability[fam.id]?.preferredDates.includes(date)
+                        return (
+                          <option key={fam.id} value={fam.id}>
+                            {preferred ? '★ ' : ''}{fam.name}{conflict ? ' ⚠' : ''} ({fam.required - fam.assigned} left)
+                          </option>
+                        )
+                      })}
+                    </select>
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+
+        {/* Footer */}
+        {(isPending || error) && (
+          <div style={{
+            padding: '0.75rem 1.25rem',
+            borderTop: '1px solid var(--border)',
+            fontSize: '0.8rem',
+            color: error ? 'var(--danger)' : 'var(--text-muted)',
+          }}>
+            {isPending ? 'Saving…' : error}
+          </div>
+        )}
+      </div>
+    </>
+  )
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function AdminScheduleCalendar({
@@ -116,6 +417,7 @@ export function AdminScheduleCalendar({
   hasProposed,
   familyStats,
   conflictPairs,
+  familyAvailability,
 }: Props) {
   const router = useRouter()
   const [isProposeP, startPropose] = useTransition()
@@ -133,10 +435,8 @@ export function AdminScheduleCalendar({
     getMondayOf(new Date(year, month - 1, 1))
   )
 
-  // Reassign panel state
-  const [selectedShift, setSelectedShift] = useState<EnrichedShift | null>(null)
-  const [isReassignPending, startReassign] = useTransition()
-  const [reassignError, setReassignError] = useState<string | null>(null)
+  // Day management panel state
+  const [selectedDay, setSelectedDay] = useState<string | null>(null)
 
   // Build lookup map: date → shifts[]
   const shiftsByDate = new Map<string, EnrichedShift[]>()
@@ -149,22 +449,6 @@ export function AdminScheduleCalendar({
   const holidaySet = new Set(holidayDates)
   const todayStr = new Date().toISOString().split('T')[0]
   const conflictsNeedAck = (hasConflicts || (proposeResult?.conflictCount ?? 0) > 0)
-
-  // ── Reassign handler ───────────────────────────────────────────────────────
-
-  function handleReassign(newFamilyId: string) {
-    if (!selectedShift) return
-    setReassignError(null)
-    startReassign(async () => {
-      const res = await reassignShiftAction(selectedShift.id, newFamilyId)
-      if (res.error) {
-        setReassignError(res.error)
-      } else {
-        setSelectedShift(null)
-        router.refresh()
-      }
-    })
-  }
 
   // ── Actions ────────────────────────────────────────────────────────────────
 
@@ -212,7 +496,7 @@ export function AdminScheduleCalendar({
 
   // ── Render helpers ─────────────────────────────────────────────────────────
 
-  function ShiftChip({ shift, onClick }: { shift: EnrichedShift; onClick?: () => void }) {
+  function ShiftChip({ shift }: { shift: EnrichedShift }) {
     const abbr = CLASS_ABBR[shift.className] ?? shift.className[0]
     const colors = CLASS_CHIP[shift.className] ?? { bg: 'var(--sage-light)', color: 'var(--sage-dark)' }
     const isProposed = shift.status === 'proposed'
@@ -221,10 +505,6 @@ export function AdminScheduleCalendar({
       return (
         <div
           title={`${shift.familyName} — conflict warning`}
-          role={onClick ? 'button' : undefined}
-          tabIndex={onClick ? 0 : undefined}
-          onClick={onClick}
-          onKeyDown={onClick ? (e) => { if (e.key === 'Enter' || e.key === ' ') onClick() } : undefined}
           style={{
             fontSize: '0.6rem',
             padding: '0.15rem 0.3rem',
@@ -237,7 +517,6 @@ export function AdminScheduleCalendar({
             textOverflow: 'ellipsis',
             maxWidth: '100%',
             opacity: isProposed ? 0.75 : 1,
-            cursor: onClick ? 'pointer' : 'default',
           }}
         >
           &#9888; {abbr} {shift.familyName.slice(0, 6)}
@@ -248,10 +527,6 @@ export function AdminScheduleCalendar({
     return (
       <div
         title={`${shift.className} · ${shift.familyName}`}
-        role={onClick ? 'button' : undefined}
-        tabIndex={onClick ? 0 : undefined}
-        onClick={onClick}
-        onKeyDown={onClick ? (e) => { if (e.key === 'Enter' || e.key === ' ') onClick() } : undefined}
         style={{
           fontSize: '0.6rem',
           padding: '0.15rem 0.3rem',
@@ -265,284 +540,10 @@ export function AdminScheduleCalendar({
           maxWidth: '100%',
           opacity: isProposed ? 0.72 : 1,
           borderLeft: isProposed ? `2px dashed ${colors.color}` : 'none',
-          cursor: onClick ? 'pointer' : 'default',
         }}
       >
         {abbr} {shift.familyName.slice(0, 8)}
       </div>
-    )
-  }
-
-  // ── Reassign panel ─────────────────────────────────────────────────────────
-
-  function ShiftReassignPanel() {
-    if (!selectedShift) return null
-
-    const otherFamiliesOnDate = (shiftsByDate.get(selectedShift.date) ?? [])
-      .filter(s => s.id !== selectedShift.id)
-      .map(s => s.familyId)
-
-    const otherFamiliesSet = new Set(otherFamiliesOnDate)
-
-    function hasConflictOnDate(familyId: string): boolean {
-      return conflictPairs.some(
-        p =>
-          (p.family_a_id === familyId && otherFamiliesSet.has(p.family_b_id)) ||
-          (p.family_b_id === familyId && otherFamiliesSet.has(p.family_a_id))
-      )
-    }
-
-    const sortedFamilies = [...familyStats].sort((a, b) =>
-      a.name.localeCompare(b.name)
-    )
-
-    const shiftDate = new Date(
-      Number(selectedShift.date.slice(0, 4)),
-      Number(selectedShift.date.slice(5, 7)) - 1,
-      Number(selectedShift.date.slice(8, 10))
-    ).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
-
-    const colors = CLASS_CHIP[selectedShift.className] ?? { bg: 'var(--sage-light)', color: 'var(--sage-dark)' }
-
-    return (
-      <>
-        {/* Backdrop */}
-        <div
-          onClick={() => { setSelectedShift(null); setReassignError(null) }}
-          style={{
-            position: 'fixed',
-            inset: 0,
-            zIndex: 40,
-            background: 'rgba(0,0,0,0.25)',
-          }}
-        />
-
-        {/* Panel */}
-        <div
-          style={{
-            position: 'fixed',
-            top: 0,
-            right: 0,
-            bottom: 0,
-            zIndex: 50,
-            width: 'min(400px, 100vw)',
-            background: 'var(--warm-white)',
-            borderLeft: '1px solid var(--border)',
-            boxShadow: '-4px 0 24px rgba(0,0,0,0.12)',
-            display: 'flex',
-            flexDirection: 'column',
-            overflow: 'hidden',
-          }}
-        >
-          {/* Header */}
-          <div
-            style={{
-              padding: '1rem 1.25rem',
-              borderBottom: '1px solid var(--border)',
-              background: 'var(--cream)',
-            }}
-          >
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'flex-start',
-                justifyContent: 'space-between',
-                marginBottom: '0.5rem',
-              }}
-            >
-              <span
-                style={{
-                  fontSize: '0.68rem',
-                  fontWeight: 700,
-                  letterSpacing: '0.08em',
-                  textTransform: 'uppercase',
-                  color: 'var(--text-muted)',
-                }}
-              >
-                Reassign Shift
-              </span>
-              <button
-                onClick={() => { setSelectedShift(null); setReassignError(null) }}
-                aria-label="Close panel"
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  cursor: 'pointer',
-                  color: 'var(--text-muted)',
-                  fontSize: '1.2rem',
-                  lineHeight: 1,
-                  padding: '0 0.25rem',
-                }}
-              >
-                &times;
-              </button>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
-              <span
-                style={{
-                  fontSize: '0.72rem',
-                  padding: '0.15rem 0.5rem',
-                  borderRadius: '4px',
-                  background: colors.bg,
-                  color: colors.color,
-                  fontWeight: 700,
-                }}
-              >
-                {selectedShift.className}
-              </span>
-              <span style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text)' }}>
-                {shiftDate}
-              </span>
-            </div>
-            <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-              Currently: <strong style={{ color: 'var(--text)' }}>{selectedShift.familyName}</strong>
-            </p>
-          </div>
-
-          {/* Column headers */}
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: '1fr auto auto auto',
-              gap: '0.5rem',
-              padding: '0.5rem 1.25rem',
-              borderBottom: '1px solid var(--border)',
-              fontSize: '0.65rem',
-              fontWeight: 700,
-              letterSpacing: '0.06em',
-              textTransform: 'uppercase',
-              color: 'var(--text-muted)',
-              background: 'var(--cream)',
-            }}
-          >
-            <span>Family</span>
-            <span style={{ textAlign: 'center' }}>Req</span>
-            <span style={{ textAlign: 'center' }}>Done</span>
-            <span style={{ textAlign: 'center' }}>Left</span>
-          </div>
-
-          {/* Scrollable family list */}
-          <div style={{ flex: 1, overflowY: 'auto' }}>
-            {sortedFamilies.map(fam => {
-              const isCurrent = fam.id === selectedShift.familyId
-              const hasConflict = hasConflictOnDate(fam.id)
-              const remaining = Math.max(0, fam.required - fam.assigned)
-
-              return (
-                <button
-                  key={fam.id}
-                  disabled={isCurrent || isReassignPending}
-                  onClick={() => handleReassign(fam.id)}
-                  style={{
-                    display: 'grid',
-                    gridTemplateColumns: '1fr auto auto auto',
-                    gap: '0.5rem',
-                    alignItems: 'center',
-                    width: '100%',
-                    padding: '0.75rem 1.25rem',
-                    borderBottom: '1px solid var(--border)',
-                    background: isCurrent ? 'var(--sage-light)' : 'transparent',
-                    border: 'none',
-                    borderBottomColor: 'var(--border)',
-                    borderBottomWidth: '1px',
-                    borderBottomStyle: 'solid',
-                    cursor: isCurrent ? 'default' : 'pointer',
-                    textAlign: 'left',
-                    transition: 'background 0.12s',
-                  }}
-                  onMouseEnter={e => {
-                    if (!isCurrent) (e.currentTarget as HTMLButtonElement).style.background = 'var(--cream)'
-                  }}
-                  onMouseLeave={e => {
-                    if (!isCurrent) (e.currentTarget as HTMLButtonElement).style.background = 'transparent'
-                  }}
-                >
-                  <span
-                    style={{
-                      fontSize: '0.875rem',
-                      color: isCurrent ? 'var(--sage-dark)' : 'var(--text)',
-                      fontWeight: isCurrent ? 600 : 400,
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '0.35rem',
-                      minWidth: 0,
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
-                    {hasConflict && (
-                      <span style={{ color: 'var(--warning)', flexShrink: 0 }}>&#9888;</span>
-                    )}
-                    {fam.name}
-                    {isCurrent && (
-                      <span
-                        style={{
-                          fontSize: '0.65rem',
-                          padding: '0.1rem 0.35rem',
-                          borderRadius: '999px',
-                          background: 'var(--sage)',
-                          color: 'white',
-                          fontWeight: 600,
-                          flexShrink: 0,
-                        }}
-                      >
-                        current
-                      </span>
-                    )}
-                  </span>
-                  <span
-                    style={{
-                      fontSize: '0.8rem',
-                      color: 'var(--text-muted)',
-                      textAlign: 'center',
-                      minWidth: '2rem',
-                    }}
-                  >
-                    {fam.required}
-                  </span>
-                  <span
-                    style={{
-                      fontSize: '0.8rem',
-                      color: 'var(--text-muted)',
-                      textAlign: 'center',
-                      minWidth: '2rem',
-                    }}
-                  >
-                    {fam.assigned}
-                  </span>
-                  <span
-                    style={{
-                      fontSize: '0.8rem',
-                      color: remaining > 0 ? 'var(--warning)' : 'var(--text-muted)',
-                      fontWeight: remaining > 0 ? 600 : 400,
-                      textAlign: 'center',
-                      minWidth: '2rem',
-                    }}
-                  >
-                    {remaining}
-                  </span>
-                </button>
-              )
-            })}
-          </div>
-
-          {/* Footer */}
-          {(reassignError || isReassignPending) && (
-            <div
-              style={{
-                padding: '0.75rem 1.25rem',
-                borderTop: '1px solid var(--border)',
-                fontSize: '0.8rem',
-                color: reassignError ? 'var(--danger)' : 'var(--text-muted)',
-                background: reassignError ? '#ffe0de' : 'var(--cream)',
-              }}
-            >
-              {isReassignPending ? 'Saving\u2026' : reassignError}
-            </div>
-          )}
-        </div>
-      </>
     )
   }
 
@@ -609,10 +610,12 @@ export function AdminScheduleCalendar({
             const isToday = date === todayStr
             const colIndex = (firstDow + idx) % 7
             const hasDayConflict = dayShifts.some(s => s.conflictWarning)
+            const hasUnfilled = dayShifts.some(s => s.familyId === null)
 
             return (
               <div
                 key={date}
+                onClick={() => { if (!isHoliday && !isWeekend) setSelectedDay(date) }}
                 style={{
                   minHeight: '5rem',
                   padding: '0.3rem',
@@ -624,34 +627,70 @@ export function AdminScheduleCalendar({
                     ? 'var(--cream)'
                     : 'transparent',
                   opacity: isHoliday ? 0.5 : 1,
+                  cursor: isHoliday || isWeekend ? 'default' : 'pointer',
                 }}
               >
                 <div
                   style={{
-                    width: '1.5rem',
-                    height: '1.5rem',
                     display: 'flex',
                     alignItems: 'center',
-                    justifyContent: 'center',
-                    borderRadius: '50%',
-                    fontSize: '0.75rem',
-                    fontWeight: isToday ? 700 : 400,
-                    color: isToday
-                      ? 'var(--sage-dark)'
-                      : isHoliday || isWeekend
-                      ? 'var(--text-muted)'
-                      : hasDayConflict
-                      ? 'var(--warning)'
-                      : 'var(--text)',
-                    background: isToday ? 'var(--sage-light)' : 'transparent',
+                    gap: '0.2rem',
                     marginBottom: '0.2rem',
                   }}
                 >
-                  {day}
+                  <div
+                    style={{
+                      width: '1.5rem',
+                      height: '1.5rem',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      borderRadius: '50%',
+                      fontSize: '0.75rem',
+                      fontWeight: isToday ? 700 : 400,
+                      color: isToday
+                        ? 'var(--sage-dark)'
+                        : isHoliday || isWeekend
+                        ? 'var(--text-muted)'
+                        : hasDayConflict
+                        ? 'var(--warning)'
+                        : 'var(--text)',
+                      background: isToday ? 'var(--sage-light)' : 'transparent',
+                      flexShrink: 0,
+                    }}
+                  >
+                    {day}
+                  </div>
+                  {hasDayConflict && (
+                    <span
+                      title="Conflict warning"
+                      style={{
+                        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                        width: '1.1rem', height: '1.1rem', borderRadius: '50%',
+                        background: 'var(--warning)', color: '#fff',
+                        fontSize: '0.6rem', fontWeight: 700,
+                      }}
+                    >
+                      ⚠
+                    </span>
+                  )}
+                  {hasUnfilled && (
+                    <span
+                      title="Unfilled slot"
+                      style={{
+                        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                        width: '1.1rem', height: '1.1rem', borderRadius: '50%',
+                        background: 'var(--warning)', color: '#fff',
+                        fontSize: '0.6rem', fontWeight: 700, marginLeft: '0.2rem',
+                      }}
+                    >
+                      ⚠
+                    </span>
+                  )}
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
                   {dayShifts.map(s => (
-                    <ShiftChip key={s.id} shift={s} onClick={() => setSelectedShift(s)} />
+                    <ShiftChip key={s.id} shift={s} />
                   ))}
                 </div>
               </div>
@@ -736,6 +775,7 @@ export function AdminScheduleCalendar({
             const isHoliday = holidaySet.has(date)
             const dayShifts = shiftsByDate.get(date) ?? []
             const hasDayConflict = dayShifts.some(s => s.conflictWarning)
+            const hasUnfilled = dayShifts.some(s => s.familyId === null)
             const isToday = date === todayStr
 
             if (isWeekend || isHoliday) return null
@@ -743,11 +783,13 @@ export function AdminScheduleCalendar({
             return (
               <div
                 key={date}
+                onClick={() => setSelectedDay(date)}
                 style={{
                   background: hasDayConflict ? 'var(--warning-light)' : 'var(--warm-white)',
                   border: `1px solid ${hasDayConflict ? 'var(--warning)' : 'var(--border)'}`,
                   borderRadius: '10px',
                   overflow: 'hidden',
+                  cursor: 'pointer',
                 }}
               >
                 {/* Day header */}
@@ -786,20 +828,35 @@ export function AdminScheduleCalendar({
                       </span>
                     )}
                   </span>
-                  {hasDayConflict && (
-                    <span
-                      style={{
-                        fontSize: '0.68rem',
-                        padding: '0.15rem 0.5rem',
-                        borderRadius: '999px',
-                        background: 'var(--warning)',
-                        color: 'white',
-                        fontWeight: 700,
-                      }}
-                    >
-                      &#9888; Conflict
-                    </span>
-                  )}
+                  <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
+                    {hasDayConflict && (
+                      <span
+                        style={{
+                          fontSize: '0.68rem',
+                          padding: '0.15rem 0.5rem',
+                          borderRadius: '999px',
+                          background: 'var(--warning)',
+                          color: 'white',
+                          fontWeight: 700,
+                        }}
+                      >
+                        &#9888; Conflict
+                      </span>
+                    )}
+                    {hasUnfilled && (
+                      <span
+                        title="Unfilled slot"
+                        style={{
+                          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                          width: '1.1rem', height: '1.1rem', borderRadius: '50%',
+                          background: 'var(--warning)', color: '#fff',
+                          fontSize: '0.6rem', fontWeight: 700,
+                        }}
+                      >
+                        ⚠
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 {/* Class rows */}
@@ -843,7 +900,7 @@ export function AdminScheduleCalendar({
                           </span>
                         ) : (
                           clsShifts.map(s => (
-                            <ShiftChip key={s.id} shift={s} onClick={() => setSelectedShift(s)} />
+                            <ShiftChip key={s.id} shift={s} />
                           ))
                         )}
                       </div>
@@ -1256,8 +1313,18 @@ export function AdminScheduleCalendar({
         </p>
       )}
 
-      {/* Reassign panel (renders as fixed overlay) */}
-      <ShiftReassignPanel />
+      {/* Day management panel (renders as fixed overlay) */}
+      {selectedDay && (
+        <DayManagementPanel
+          date={selectedDay}
+          classes={classes}
+          dayShifts={shifts.filter(s => s.date === selectedDay)}
+          familyStats={familyStats}
+          familyAvailability={familyAvailability}
+          conflictPairs={conflictPairs}
+          onClose={() => setSelectedDay(null)}
+        />
+      )}
     </div>
   )
 }
