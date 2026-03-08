@@ -37,6 +37,7 @@ interface Props {
   initialAbsences: PlannedAbsence[]
   initialExtraShiftsWilling?: string
   requiredShifts: number | null
+  hasExistingSubmission?: boolean
 }
 
 const DAYS_OF_WEEK = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa']
@@ -65,6 +66,7 @@ export function AvailabilityCalendar({
   initialAbsences,
   initialExtraShiftsWilling,
   requiredShifts,
+  hasExistingSubmission = false,
 }: Props) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
@@ -93,6 +95,7 @@ export function AvailabilityCalendar({
 
   const [saveError, setSaveError] = useState<string | null>(null)
   const [saveSuccess, setSaveSuccess] = useState(false)
+  const [isEditing, setIsEditing] = useState(!hasExistingSubmission)
 
   // ── Derived calendar data ──────────────────────────────────────────────────────────────────────────
   const holidaySet = new Set(holidayDates)
@@ -271,10 +274,51 @@ export function AvailabilityCalendar({
 
   // ── Summary stats ──────────────────────────────────────────────────────────────────────────
   const volunteerDays = availableDates.size
+  const totalAbsences = Array.from(absences.values()).reduce((sum, s) => sum + s.size, 0)
 
   // ── Render ───────────────────────────────────────────────────────────────────────────────────
   return (
     <div style={{ maxWidth: '480px' }}>
+      {!isEditing ? (
+        <div style={{
+          background: 'var(--warm-white)',
+          border: '1px solid var(--border)',
+          borderRadius: '12px',
+          padding: '1.25rem',
+        }}>
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            marginBottom: '0.75rem',
+          }}>
+            <div>
+              <div style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text)' }}>
+                Availability submitted ✓
+              </div>
+              <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>
+                {availableDates.size} volunteer day{availableDates.size !== 1 ? 's' : ''}
+                {totalAbsences > 0 && ` · ${totalAbsences} absence${totalAbsences !== 1 ? 's' : ''}`}
+              </div>
+            </div>
+            <button
+              onClick={() => setIsEditing(true)}
+              style={{
+                background: 'transparent',
+                border: '1px solid var(--border)',
+                borderRadius: '8px',
+                padding: '0.45rem 0.9rem',
+                fontSize: '0.85rem',
+                cursor: 'pointer',
+                color: 'var(--text)',
+              }}
+            >
+              Edit Availability
+            </button>
+          </div>
+        </div>
+      ) : (
+        <>
       {/* Month navigation */}
       <div
         style={{
@@ -683,8 +727,10 @@ export function AvailabilityCalendar({
           transition: 'background 0.15s',
         }}
       >
-        {isPending ? 'Saving…' : 'Save availability'}
+        {isPending ? 'Saving…' : hasExistingSubmission ? 'Save Changes' : 'Submit Availability'}
       </button>
+        </>
+      )}
     </div>
   )
 }

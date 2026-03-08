@@ -119,6 +119,8 @@ export default async function AvailabilityPage({
     // Supabase not yet configured — render with empty state
   }
 
+  const hasExistingSubmission = initialAvailableDates.length > 0 || initialAbsences.length > 0
+
   return (
     <div
       style={{
@@ -170,6 +172,7 @@ export default async function AvailabilityPage({
         initialAbsences={initialAbsences}
         initialExtraShiftsWilling={initialExtraShiftsWilling}
         requiredShifts={requiredShifts}
+        hasExistingSubmission={hasExistingSubmission}
       />
     </div>
   )
