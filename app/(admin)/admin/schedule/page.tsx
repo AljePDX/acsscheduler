@@ -61,7 +61,7 @@ export default async function AdminSchedulePage({
   let hasProposed = false
   let familyStats: { id: string; name: string; required: number; assigned: number }[] = []
   let conflictPairs: FamilyConflictRow[] = []
-  let familyAvailability: Record<string, FamilyAvailInfo> = {}
+  const familyAvailability: Record<string, FamilyAvailInfo> = {}
 
   try {
     const mm = String(targetMonth).padStart(2, '0')
