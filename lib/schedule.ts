@@ -32,6 +32,7 @@ export interface ProposedShift {
   family_id: string
   /** True if this assignment pairs two conflict-flagged families on the same day */
   conflict_warning: boolean
+  off_day_warning: boolean
 }
 
 export interface ScheduleProposalInput {

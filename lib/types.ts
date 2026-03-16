@@ -52,6 +52,8 @@ export interface FamilyRow {
   phone: string | null
   notes: string | null
   shift_override: number | null
+  is_flexible_teacher: boolean
+  is_assistant_teacher: boolean
   created_at: string
 }
 
@@ -119,6 +121,7 @@ export interface ShiftRow {
   family_id: string | null
   status: ShiftStatus
   conflict_warning: boolean
+  off_day_warning: boolean
   created_at: string
 }
 
