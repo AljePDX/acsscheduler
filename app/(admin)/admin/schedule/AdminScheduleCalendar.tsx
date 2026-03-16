@@ -303,6 +303,9 @@ function DayManagementPanel({
                           {shift.conflictWarning && (
                             <span title="Conflict warning" style={{ color: 'var(--warning)', marginLeft: '0.3rem', fontSize: '0.75rem' }}>⚠</span>
                           )}
+                          {shift.offDayWarning && (
+                            <span title="Scheduled on a non-attendance day" style={{ color: 'var(--warning)', marginLeft: '0.3rem', fontSize: '0.75rem' }}>★</span>
+                          )}
                         </span>
                         {/* Actions */}
                         <div style={{ display: 'flex', gap: '0.35rem', flexShrink: 0 }}>
@@ -426,6 +429,7 @@ export function AdminScheduleCalendar({
 
   const [viewMode, setViewMode] = useState<'month' | 'week'>('month')
   const [conflictsAcknowledged, setConflictsAcknowledged] = useState(false)
+  const [offDayAcknowledged, setOffDayAcknowledged] = useState(false)
   const [proposeResult, setProposeResult] = useState<ProposalSummary | null>(null)
   const [proposeError, setProposeError] = useState<string | null>(null)
   const [publishSuccess, setPublishSuccess] = useState(false)
@@ -450,6 +454,7 @@ export function AdminScheduleCalendar({
   const holidaySet = new Set(holidayDates)
   const todayStr = new Date().toISOString().split('T')[0]
   const conflictsNeedAck = (hasConflicts || (proposeResult?.conflictCount ?? 0) > 0)
+  const offDayNeedAck = shifts.some(s => s.offDayWarning && s.status === 'proposed')
 
   // ── Actions ────────────────────────────────────────────────────────────────
 
@@ -457,6 +462,7 @@ export function AdminScheduleCalendar({
     setProposeError(null)
     setProposeResult(null)
     setConflictsAcknowledged(false)
+    setOffDayAcknowledged(false)
     startPropose(async () => {
       const res = await proposeScheduleAction(year, month)
       if (res.error) {
@@ -611,6 +617,7 @@ export function AdminScheduleCalendar({
             const isToday = date === todayStr
             const colIndex = (firstDow + idx) % 7
             const hasDayConflict = dayShifts.some(s => s.conflictWarning)
+            const hasDayOffDay = dayShifts.some(s => s.offDayWarning)
             const hasUnfilled = dayShifts.some(s => s.familyId === null)
 
             return (
@@ -673,6 +680,19 @@ export function AdminScheduleCalendar({
                       }}
                     >
                       ⚠
+                    </span>
+                  )}
+                  {hasDayOffDay && (
+                    <span
+                      title="Non-attendance day"
+                      style={{
+                        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                        width: '1.1rem', height: '1.1rem', borderRadius: '50%',
+                        background: 'var(--warning)', color: '#fff',
+                        fontSize: '0.6rem', fontWeight: 700, marginLeft: '0.2rem',
+                      }}
+                    >
+                      ★
                     </span>
                   )}
                   {hasUnfilled && (
@@ -776,6 +796,7 @@ export function AdminScheduleCalendar({
             const isHoliday = holidaySet.has(date)
             const dayShifts = shiftsByDate.get(date) ?? []
             const hasDayConflict = dayShifts.some(s => s.conflictWarning)
+            const hasDayOffDay = dayShifts.some(s => s.offDayWarning)
             const hasUnfilled = dayShifts.some(s => s.familyId === null)
             const isToday = date === todayStr
 
@@ -842,6 +863,19 @@ export function AdminScheduleCalendar({
                         }}
                       >
                         &#9888; Conflict
+                      </span>
+                    )}
+                    {hasDayOffDay && (
+                      <span
+                        title="Non-attendance day"
+                        style={{
+                          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                          width: '1.1rem', height: '1.1rem', borderRadius: '50%',
+                          background: 'var(--warning)', color: '#fff',
+                          fontSize: '0.6rem', fontWeight: 700, marginLeft: '0.2rem',
+                        }}
+                      >
+                        ★
                       </span>
                     )}
                     {hasUnfilled && (
@@ -1040,6 +1074,41 @@ export function AdminScheduleCalendar({
         </div>
       )}
 
+      {/* ── Off-day acknowledgment banner ──────────────────────────────────────── */}
+      {offDayNeedAck && !offDayAcknowledged && (
+        <div
+          style={{
+            background: 'var(--warning-light)',
+            border: '1px solid var(--warning)',
+            borderRadius: '8px',
+            padding: '0.75rem 1rem',
+            marginBottom: '1rem',
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: '0.75rem',
+          }}
+        >
+          <span style={{ color: 'var(--warning)', fontSize: '1.1rem', lineHeight: 1 }}>★</span>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 700, color: 'var(--warning)', fontSize: '0.875rem' }}>
+              Non-attendance day assignments
+            </div>
+            <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>
+              Some parents are scheduled on days their children are not attending school.
+              Review these assignments before publishing.
+            </div>
+          </div>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+            <input
+              type="checkbox"
+              checked={offDayAcknowledged}
+              onChange={e => setOffDayAcknowledged(e.target.checked)}
+            />
+            <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--warning)' }}>Acknowledge</span>
+          </label>
+        </div>
+      )}
+
       {/* ── Action bar ───────────────────────────────────────────────────────── */}
       <div
         style={{
@@ -1072,17 +1141,17 @@ export function AdminScheduleCalendar({
         {/* Publish button — always rendered; disabled when no proposed shifts exist */}
         <button
           onClick={handlePublish}
-          disabled={!hasProposed || isPublishP || (conflictsNeedAck && !conflictsAcknowledged)}
+          disabled={!hasProposed || isPublishP || (conflictsNeedAck && !conflictsAcknowledged) || (offDayNeedAck && !offDayAcknowledged)}
           style={{
-            background: (!hasProposed || (conflictsNeedAck && !conflictsAcknowledged)) ? 'var(--border)' : 'var(--sage-dark)',
-            color: (!hasProposed || (conflictsNeedAck && !conflictsAcknowledged)) ? 'var(--text-muted)' : 'white',
+            background: (!hasProposed || (conflictsNeedAck && !conflictsAcknowledged) || (offDayNeedAck && !offDayAcknowledged)) ? 'var(--border)' : 'var(--sage-dark)',
+            color: (!hasProposed || (conflictsNeedAck && !conflictsAcknowledged) || (offDayNeedAck && !offDayAcknowledged)) ? 'var(--text-muted)' : 'white',
             border: 'none',
             borderRadius: '8px',
             padding: '0.6rem 1.25rem',
             fontSize: '0.875rem',
             fontWeight: 500,
             cursor:
-              (!hasProposed || isPublishP || (conflictsNeedAck && !conflictsAcknowledged))
+              (!hasProposed || isPublishP || (conflictsNeedAck && !conflictsAcknowledged) || (offDayNeedAck && !offDayAcknowledged))
                 ? 'default'
                 : 'pointer',
             opacity: isPublishP ? 0.7 : 1,
