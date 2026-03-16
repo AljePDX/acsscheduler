@@ -36,6 +36,7 @@ export interface EnrichedShift {
   familyName: string
   status: string
   conflictWarning: boolean
+  offDayWarning: boolean
 }
 
 export interface FamilyShiftStats {

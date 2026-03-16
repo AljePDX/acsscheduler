@@ -121,6 +121,7 @@ export default async function AdminSchedulePage({
         familyName: s.family_id ? (familyMap.get(s.family_id) ?? 'Unknown') : '—',  // fallback
         status: s.status,
         conflictWarning: s.conflict_warning,
+        offDayWarning: s.off_day_warning,
       }
     })
 

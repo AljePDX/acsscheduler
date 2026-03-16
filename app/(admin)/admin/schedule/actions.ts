@@ -147,6 +147,7 @@ export async function proposeScheduleAction(
           family_id: s.family_id,
           status: 'proposed',
           conflict_warning: s.conflict_warning,
+          off_day_warning: s.off_day_warning,
         }))
       )
 
