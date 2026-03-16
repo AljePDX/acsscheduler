@@ -132,8 +132,39 @@ export function proposeSchedule(input: ScheduleProposalInput): ScheduleProposalR
     familyChildren.get(child.family_id)!.push(child)
   }
 
+  // ── Per-family class ID set (for class constraint) ─────────────────────────
+  const familyClassIds = new Map<string, Set<string>>()
+  for (const child of children) {
+    if (!familyClassIds.has(child.family_id)) familyClassIds.set(child.family_id, new Set())
+    familyClassIds.get(child.family_id)!.add(child.class_id)
+  }
+
   // Only schedule families that submitted availability this month
   const schedulableFamilies = families.filter(f => availMap.has(f.id))
+
+  // ── 3c. Attendance date maps: which school days each family's children attend ─
+  const DOW_MAP: Record<number, string> = { 1: 'M', 2: 'T', 3: 'W', 4: 'Th', 5: 'Fr' }
+
+  const familyAttendDates    = new Map<string, Set<string>>() // ≥1 child attends
+  const familyAllAttendDates = new Map<string, Set<string>>() // all children attend
+
+  for (const date of schoolDays) {
+    const dowAbbr = DOW_MAP[new Date(date + 'T00:00:00').getDay()]
+    for (const family of schedulableFamilies) {
+      const kids = familyChildren.get(family.id) ?? []
+      if (kids.length === 0) continue
+      const anyAttends = kids.some(c => c.days_of_week === null || c.days_of_week.includes(dowAbbr))
+      const allAttend  = kids.every(c => c.days_of_week === null || c.days_of_week.includes(dowAbbr))
+      if (anyAttends) {
+        if (!familyAttendDates.has(family.id)) familyAttendDates.set(family.id, new Set())
+        familyAttendDates.get(family.id)!.add(date)
+      }
+      if (allAttend) {
+        if (!familyAllAttendDates.has(family.id)) familyAllAttendDates.set(family.id, new Set())
+        familyAllAttendDates.get(family.id)!.add(date)
+      }
+    }
+  }
 
   const requiredShifts = new Map<string, number>()
   for (const family of schedulableFamilies) {
@@ -174,7 +205,15 @@ export function proposeSchedule(input: ScheduleProposalInput): ScheduleProposalR
             if (!availMap.get(f.id)?.has(date)) return false
             const req = requiredShifts.get(f.id) ?? 0
             if ((assignedCount.get(f.id) ?? 0) >= req) return false
-            if (assignedDates.get(f.id)?.has(date)) return false
+            // Flexible teachers may cover multiple classes on the same day;
+            // regular families can only be assigned once per date
+            if (!f.is_flexible_teacher && assignedDates.get(f.id)?.has(date)) return false
+            // Class constraint: family must have a child in this class, or be a flexible teacher,
+            // or have no enrolled children at all (e.g. admin/special volunteer)
+            if (!f.is_flexible_teacher) {
+              const classIds = familyClassIds.get(f.id) ?? new Set()
+              if (classIds.size > 0 && !classIds.has(cls.id)) return false
+            }
             return true
           })
           .sort((a, b) => {
@@ -189,7 +228,12 @@ export function proposeSchedule(input: ScheduleProposalInput): ScheduleProposalR
             const remainB = (requiredShifts.get(b.id) ?? 0) - (assignedCount.get(b.id) ?? 0)
             if (remainA !== remainB) return remainB - remainA
 
-            // 3. Preferred date tiebreaker
+            // 3. Assistant teacher last — regular families before assistant teacher families
+            const aAT = a.is_assistant_teacher ? 1 : 0
+            const bAT = b.is_assistant_teacher ? 1 : 0
+            if (aAT !== bAT) return aAT - bAT
+
+            // 4. Preferred date tiebreaker
             const aPref = preferredMap.get(a.id)?.has(date) ? 1 : 0
             const bPref = preferredMap.get(b.id)?.has(date) ? 1 : 0
             return bPref - aPref
@@ -202,8 +246,17 @@ export function proposeSchedule(input: ScheduleProposalInput): ScheduleProposalR
           const fConflicts = conflictMap.get(f.id) ?? new Set<string>()
           return !assignedOnThisDate.some(otherId => fConflicts.has(otherId))
         })
+        const pool = conflictFree.length > 0 ? conflictFree : candidates
 
-        const pick = conflictFree[0] ?? candidates[0]
+        // Tier 1: all children attend this date
+        const allAttendPool = pool.filter(f => familyAllAttendDates.get(f.id)?.has(date))
+        // Tier 2: at least one child attends this date
+        const anyAttendPool = pool.filter(f => familyAttendDates.get(f.id)?.has(date))
+
+        const pick = allAttendPool[0] ?? anyAttendPool[0] ?? pool[0]
+        const offDayWarning = pick
+          ? !(familyAttendDates.get(pick.id)?.has(date) ?? false)
+          : false
 
         // Determine if this assignment triggers a conflict warning
         const pickConflicts = conflictMap.get(pick.id) ?? new Set<string>()
@@ -214,6 +267,7 @@ export function proposeSchedule(input: ScheduleProposalInput): ScheduleProposalR
           class_id: cls.id,
           family_id: pick.id,
           conflict_warning: hasConflict,
+          off_day_warning: offDayWarning,
         })
 
         // Update tracking state

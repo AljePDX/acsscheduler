@@ -28,6 +28,8 @@ function makeFamily(id: string, override: number | null = null): FamilyRow {
     notes: null,
     shift_override: override,
     created_at: '2026-01-01T00:00:00Z',
+    is_flexible_teacher: false,
+    is_assistant_teacher: false,
   }
 }
 
@@ -357,6 +359,8 @@ describe('proposeSchedule', () => {
     const makeFamily = (id: string, override: number) => ({
       id, name: id, email: '', phone: null, notes: null,
       shift_override: override, created_at: '',
+      is_flexible_teacher: false,
+      is_assistant_teacher: false,
     })
     const makeChild = (classId: string, familyId: string, idx: number) => ({
       id: `c${idx}`, family_id: familyId, class_id: classId, name: `c${idx}`,
@@ -409,6 +413,161 @@ describe('proposeSchedule', () => {
       const apr2 = result.shifts.filter(s => s.date === '2026-04-02')
       expect(apr2.length).toBe(1)
       expect(apr2[0].family_id).toBe('fam-a')
+    })
+  })
+
+  describe('class constraints and day preferences', () => {
+    // Local helpers — independent of outer scope
+    const mkClass = (id: string, ratio: number) => ({
+      id, name: id, student_teacher_ratio: ratio, created_at: '',
+    })
+    const mkFamily = (id: string, opts: {
+      override?: number
+      flexible?: boolean
+      assistant?: boolean
+    } = {}) => ({
+      id, name: id, email: '', phone: null, notes: null,
+      shift_override: opts.override ?? 1, created_at: '',
+      is_flexible_teacher: opts.flexible ?? false,
+      is_assistant_teacher: opts.assistant ?? false,
+    })
+    const mkChild = (id: string, classId: string, familyId: string, daysOfWeek?: string[] | null) => ({
+      id, family_id: familyId, class_id: classId, name: id,
+      days_per_week: 5, days_of_week: daysOfWeek ?? null,
+      days_change_pending: null, days_change_status: null,
+    })
+    const mkAvail = (familyId: string, dates: string[]) => ({
+      id: familyId + '-av', family_id: familyId, period_month: '2026-04-01',
+      available_dates: dates, preferred_dates: [],
+      planned_absences: [], extra_shifts_willing: '0' as const,
+      notes: null, submitted_at: '',
+    })
+    // 6 students in a class with ratio 5 → ceil(6/5)-1 = 1 parent needed
+    const studentsInClass = (classId: string, count: number) =>
+      Array.from({ length: count }, (_, i) => mkChild(`${classId}-s${i}`, classId, `bg-${classId}-${i}`))
+
+    it('does not assign a family to a class their child is not enrolled in', () => {
+      const result = proposeSchedule({
+        year: 2026, month: 4,
+        classes: [mkClass('rose', 5), mkClass('daisy', 5)],
+        children: [
+          ...studentsInClass('rose', 5),
+          ...studentsInClass('daisy', 5),
+          mkChild('child-a', 'rose', 'fam-a'),
+        ],
+        families: [mkFamily('fam-a')],
+        availability: [mkAvail('fam-a', ['2026-04-01'])],
+        conflicts: [],
+        holidayDates: new Set(),
+      })
+      expect(result.shifts.some(s => s.family_id === 'fam-a' && s.class_id === 'rose')).toBe(true)
+      expect(result.shifts.some(s => s.family_id === 'fam-a' && s.class_id === 'daisy')).toBe(false)
+      expect(result.unfilledSlots.some(s => s.class_id === 'daisy')).toBe(true)
+    })
+
+    it('assigns a flexible teacher to any class regardless of their child\'s class', () => {
+      const result = proposeSchedule({
+        year: 2026, month: 4,
+        classes: [mkClass('rose', 5), mkClass('daisy', 5)],
+        children: [
+          ...studentsInClass('rose', 5),
+          ...studentsInClass('daisy', 5),
+          mkChild('child-a', 'rose', 'fam-a'),
+        ],
+        families: [mkFamily('fam-a', { override: 2, flexible: true })],
+        availability: [mkAvail('fam-a', ['2026-04-01'])],
+        conflicts: [],
+        holidayDates: new Set(),
+      })
+      expect(result.shifts.some(s => s.family_id === 'fam-a' && s.class_id === 'rose')).toBe(true)
+      expect(result.shifts.some(s => s.family_id === 'fam-a' && s.class_id === 'daisy')).toBe(true)
+    })
+
+    it('sets off_day_warning=true when family is forced to volunteer on a non-attendance day', () => {
+      // Apr 2 is Thursday; child attends M/W/Fr only
+      const result = proposeSchedule({
+        year: 2026, month: 4,
+        classes: [mkClass('rose', 5)],
+        children: [
+          ...studentsInClass('rose', 5),
+          mkChild('child-a', 'rose', 'fam-a', ['M', 'W', 'Fr']),
+        ],
+        families: [mkFamily('fam-a')],
+        availability: [mkAvail('fam-a', ['2026-04-02'])],
+        conflicts: [],
+        holidayDates: new Set(),
+      })
+      const shift = result.shifts.find(s => s.family_id === 'fam-a')
+      expect(shift).toBeDefined()
+      expect(shift!.off_day_warning).toBe(true)
+    })
+
+    it('sets off_day_warning=false when child attends on the scheduled day', () => {
+      // Apr 1 is Wednesday; child attends W only
+      const result = proposeSchedule({
+        year: 2026, month: 4,
+        classes: [mkClass('rose', 5)],
+        children: [
+          ...studentsInClass('rose', 5),
+          mkChild('child-a', 'rose', 'fam-a', ['W']),
+        ],
+        families: [mkFamily('fam-a')],
+        availability: [mkAvail('fam-a', ['2026-04-01'])],
+        conflicts: [],
+        holidayDates: new Set(),
+      })
+      const shift = result.shifts.find(s => s.family_id === 'fam-a')
+      expect(shift).toBeDefined()
+      expect(shift!.off_day_warning).toBe(false)
+    })
+
+    it('prefers scheduling families on days their child attends (all-attend day wins)', () => {
+      // fam-a child attends W only, fam-b child attends Th only
+      // Apr 1=Wed, Apr 2=Thu — each family should get the day their child attends
+      const result = proposeSchedule({
+        year: 2026, month: 4,
+        classes: [mkClass('rose', 5)],
+        children: [
+          ...studentsInClass('rose', 5),
+          mkChild('child-a', 'rose', 'fam-a', ['W']),
+          mkChild('child-b', 'rose', 'fam-b', ['Th']),
+        ],
+        families: [mkFamily('fam-a'), mkFamily('fam-b')],
+        availability: [
+          mkAvail('fam-a', ['2026-04-01', '2026-04-02']),
+          mkAvail('fam-b', ['2026-04-01', '2026-04-02']),
+        ],
+        conflicts: [],
+        holidayDates: new Set(),
+      })
+      const apr1 = result.shifts.filter(s => s.date === '2026-04-01')
+      const apr2 = result.shifts.filter(s => s.date === '2026-04-02')
+      expect(apr1.some(s => s.family_id === 'fam-a')).toBe(true)
+      expect(apr2.some(s => s.family_id === 'fam-b')).toBe(true)
+    })
+
+    it('schedules assistant teacher last — only when no regular family is available', () => {
+      // fam-a regular, fam-b assistant teacher — both in rose, both available Apr 1
+      // 1 slot needed → fam-a should win
+      const result = proposeSchedule({
+        year: 2026, month: 4,
+        classes: [mkClass('rose', 5)],
+        children: [
+          ...studentsInClass('rose', 5),
+          mkChild('child-a', 'rose', 'fam-a'),
+          mkChild('child-b', 'rose', 'fam-b'),
+        ],
+        families: [mkFamily('fam-a'), mkFamily('fam-b', { assistant: true })],
+        availability: [
+          mkAvail('fam-a', ['2026-04-01']),
+          mkAvail('fam-b', ['2026-04-01']),
+        ],
+        conflicts: [],
+        holidayDates: new Set(),
+      })
+      const apr1 = result.shifts.filter(s => s.date === '2026-04-01')
+      expect(apr1.length).toBe(1)
+      expect(apr1[0].family_id).toBe('fam-a')
     })
   })
 
